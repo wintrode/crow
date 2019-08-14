@@ -175,6 +175,13 @@ namespace crow
                 io_service->stop();
         }
 
+        void set_data_callbacks(data_fn_t datafn, data_done_fn_t datadonefn) {
+	    data_callback=datafn;
+	    data_done_callback=datadonefn;
+        }
+    
+
+      
     private:
         asio::io_service& pick_io_service()
         {
@@ -192,6 +199,7 @@ namespace crow
                 is, handler_, server_name_, middlewares_,
                 get_cached_date_str_pool_[roundrobin_index_], *timer_queue_pool_[roundrobin_index_],
                 adaptor_ctx_);
+	    p->set_data_callbacks(data_callback, data_done_callback);
             acceptor_.async_accept(p->socket(),
                 [this, p, &is](boost::system::error_code ec)
                 {
@@ -231,6 +239,11 @@ namespace crow
 
         std::tuple<Middlewares...>* middlewares_;
 
+        // allow for custom post data handler
+      data_fn_t data_callback;
+      data_done_fn_t data_done_callback;
+
+      
 #ifdef CROW_ENABLE_SSL
         bool use_ssl_{false};
         boost::asio::ssl::context ssl_context_{boost::asio::ssl::context::sslv23};

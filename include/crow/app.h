@@ -103,6 +103,11 @@ namespace crow
             cv_started_.notify_all();
         }
 
+        void set_data_callbacks(data_fn_t datafn, data_done_fn_t datadonefn) {
+	    data_callback=datafn;
+	    data_done_callback=datadonefn;
+        }
+      
         void run()
         {
             validate();
@@ -112,6 +117,7 @@ namespace crow
                 ssl_server_ = std::move(std::unique_ptr<ssl_server_t>(new ssl_server_t(this, bindaddr_, port_, &middlewares_, concurrency_, &ssl_context_)));
                 ssl_server_->set_tick_function(tick_interval_, tick_function_);
                 notify_server_start();
+		ssl_server_->set_data_callbacks(data_callback, data_done_callback);
                 ssl_server_->run();
             }
             else
@@ -120,6 +126,7 @@ namespace crow
                 server_ = std::move(std::unique_ptr<server_t>(new server_t(this, bindaddr_, port_, &middlewares_, concurrency_, nullptr)));
                 server_->set_tick_function(tick_interval_, tick_function_);
                 notify_server_start();
+		server_->set_data_callbacks(data_callback, data_done_callback);	  
                 server_->run();
             }
         }
@@ -263,6 +270,11 @@ namespace crow
         bool server_started_{false};
         std::condition_variable cv_started_;
         std::mutex start_mutex_;
+
+        // allow for custom post data handler
+      data_fn_t data_callback = 0;
+      data_done_fn_t data_done_callback = 0;
+        
     };
     template <typename ... Middlewares>
     using App = Crow<Middlewares...>;

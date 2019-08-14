@@ -220,13 +220,17 @@ namespace crow
             return adaptor_.raw_socket();
         }
 
+      void set_data_callbacks(data_fn_t datafn, data_done_fn_t datadonefn) {
+	    parser_.data_callback=datafn;
+	    parser_.data_done_callback=datadonefn;
+        }
+
         void start()
         {
             adaptor_.start([this](const boost::system::error_code& ec) {
                 if (!ec)
                 {
                     start_deadline();
-
                     do_read();
                 }
                 else
@@ -254,6 +258,7 @@ namespace crow
             bool is_invalid_request = false;
             add_keep_alive_ = false;
 
+	    // this occurs after POST body read
             req_ = std::move(parser_.to_request());
             request& req = req_;
 
@@ -445,10 +450,18 @@ namespace crow
             }
 
             buffers_.emplace_back(crlf.data(), crlf.size());
-            res_body_copy_.swap(res.body);
-            buffers_.emplace_back(res_body_copy_.data(), res_body_copy_.size());
-
-            do_write();
+	    if (res.ifs)
+	    {
+	      // body data is to be read from the stream ifs
+	      int clen = atoi(res.headers.find("content-length")->second.c_str());
+	      do_write_ifs(res.ifs, clen);
+	    }
+	    else
+	    {
+	      res_body_copy_.swap(res.body);
+	      buffers_.emplace_back(res_body_copy_.data(), res_body_copy_.size());
+	      do_write();
+	    }
 
             if (need_to_start_read_after_complete_)
             {
@@ -506,6 +519,8 @@ namespace crow
                 });
         }
 
+      
+
         void do_write()
         {
             //auto self = this->shared_from_this();
@@ -531,6 +546,81 @@ namespace crow
                         check_destroy();
                     }
                 });
+	}
+      
+
+        void write_stream() {
+
+	  //std::cerr << "Going to read...." << (void*) ifs << "\n";
+	  ifs->read(ifs_buf, ((ifs_len-ifs_written)  < 4096) ? (ifs_len-ifs_written):4096);
+	  
+	  int read = ifs->gcount();
+	  bool is_writing=true;
+
+	  if (read <= 0) {
+	    CROW_LOG_DEBUG << this << " no data read from response stream";
+	    // do something?
+	  }
+	  boost::asio::async_write(adaptor_.socket(), boost::asio::buffer(ifs_buf, read), 
+	       [&](const boost::system::error_code& ec, std::size_t bt/*bytes_transferred*/)
+	       {
+		 if (!ec) {
+		   //std::cerr << " read " << (ifs_written+bt) << " " << ifs_len <<"\n";
+		   if ( ifs_written + bt < ifs_len) {
+		     ifs_written += bt;
+		     write_stream();
+		   }
+		   else {
+		     CROW_LOG_INFO << "Response data written: " << req_.raw_url;
+		     is_writing=false;
+		     if (close_connection_)
+		       {
+			 adaptor_.close();
+			 CROW_LOG_DEBUG << this << " from write(1)";
+			 check_destroy();
+		       }
+		     //ifs->close();
+		     delete ifs;
+		     ifs=0;
+		     
+		   }
+	      }
+		 else
+		   {
+		     is_writing = false;
+		     
+		     CROW_LOG_DEBUG << this << " from write(2)";
+		     check_destroy();
+		   }
+	    });
+
+        }
+      
+        void do_write_ifs(std::istream *ifs_, int len)
+        {
+            is_writing = true;
+	    // write out the headers first
+	    ifs_len = len;
+	    ifs_written = 0;
+	    ifs = ifs_;
+
+            boost::asio::async_write(adaptor_.socket(), buffers_, 
+		 [&](const boost::system::error_code& ec, std::size_t /*bytes_transferred*/)
+		 {
+		   res.clear();
+		   res_body_copy_.clear();
+		   if (!ec) {
+		     write_stream();
+		   }
+		   else
+		     {
+		       is_writing = false;
+		       
+		       CROW_LOG_DEBUG << this << " from write(2)";
+		       check_destroy();
+		     }
+		 });
+	    
         }
 
         void check_destroy()
@@ -583,6 +673,11 @@ namespace crow
         std::string date_str_;
         std::string res_body_copy_;
 
+        std::istream *ifs;
+        int ifs_len;
+        int ifs_written;
+        char ifs_buf[4096];
+      
         //boost::asio::deadline_timer deadline_;
         detail::dumb_timer_queue::key timer_cancel_key_;
 

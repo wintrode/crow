@@ -8,9 +8,13 @@
 #include "crow/http_parser_merged.h"
 #include "crow/http_request.h"
 
+typedef void (*data_fn_t)(http_parser *self_, const char* at, size_t length);
+typedef void (*data_done_fn_t)(http_parser *self_);
+
 namespace crow
 {
-    template <typename Handler>
+
+  template <typename Handler>
     struct HTTPParser : public http_parser
     {
         static int on_message_begin(http_parser* self_)
@@ -64,20 +68,29 @@ namespace crow
             HTTPParser* self = static_cast<HTTPParser*>(self_);
             if (!self->header_field.empty())
             {
-                self->headers.emplace(std::move(self->header_field), std::move(self->header_value));
+	      self->headers.emplace(std::move(self->header_field), std::move(self->header_value));
+
             }
             self->process_header();
+
             return 0;
         }
         static int on_body(http_parser* self_, const char* at, size_t length)
         {
             HTTPParser* self = static_cast<HTTPParser*>(self_);
-            self->body.insert(self->body.end(), at, at+length);
+	    // adding to body string
+	    if (self->data_callback) 
+	      self->data_callback(self_, at, length);
+	    else 
+	      self->body.insert(self->body.end(), at, at+length);
             return 0;
         }
         static int on_message_complete(http_parser* self_)
         {
             HTTPParser* self = static_cast<HTTPParser*>(self_);
+
+	    if (self->data_done_callback) 
+	      self->data_done_callback(self_);
 
             // url params
             self->url = self->raw_url.substr(0, self->raw_url.find("?"));
@@ -141,12 +154,12 @@ namespace crow
         {
             return request{(HTTPMethod)method, std::move(raw_url), std::move(url), std::move(url_params), std::move(headers), std::move(body)};
         }
-
-		bool is_upgrade() const
-		{
-			return upgrade;
-		}
-
+      
+        bool is_upgrade() const
+        { 
+	    return upgrade;
+        }
+      
         bool check_version(int major, int minor) const
         {
             return http_major == major && http_minor == minor;
@@ -163,5 +176,11 @@ namespace crow
         std::string body;
 
         Handler* handler_;
+
+        // allow for custom post data handler
+        //void (*data_callback)(http_parser *self_, const char* at, size_t length) = 0;
+        data_fn_t data_callback;
+        data_done_fn_t data_done_callback;
+        //void (*data_done_callback)(http_parser *self_) = 0;
     };
 }

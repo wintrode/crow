@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <unordered_map>
+#include <iostream>
 
 #include "crow/json.h"
 #include "crow/http_request.h"
@@ -18,6 +19,7 @@ namespace crow
         int code{200};
         std::string body;
         json::wvalue json_value;
+        std::istream *ifs=0;
 
         // `headers' stores HTTP headers.
         ci_map headers;
@@ -46,6 +48,10 @@ namespace crow
             json_mode();
         }
         response(int code, std::string body) : code(code), body(std::move(body)) {}
+        response(int code, std::istream *ifs, int len, const std::string &ctype) : code(code),ifs(ifs) {
+	  set_header("Content-Type", ctype);
+	  set_header("Content-Length", std::to_string(len));
+        }   
         response(const json::wvalue& json_value) : body(json::dump(json_value))
         {
             json_mode();
@@ -69,6 +75,7 @@ namespace crow
             code = r.code;
             headers = std::move(r.headers);
             completed_ = r.completed_;
+	    ifs = r.ifs;
             return *this;
         }
 
@@ -111,7 +118,7 @@ namespace crow
         }
 
         void end(const std::string& body_part)
-        {
+        {	  
             body += body_part;
             end();
         }
